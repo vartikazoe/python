@@ -1,0 +1,71 @@
+from fastapi import FastAPI, HTTPException, Depends
+from pydantic import BaseModel
+from typing import Optional
+from fastapi.security import OAuth2PasswordBearer
+import jwt
+from passlib.context import CryptContext
+
+SECRET_KEY = "090909"
+ALGORITHM = "HS256"
+
+app = FastAPI()
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+# Example in-memory "database"
+users_db = {}
+
+class User(BaseModel):
+    userid: str
+    password: str
+    role: str
+
+class UserInDB(User):
+    hashed_password: str
+
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
+
+def get_password_hash(password):
+    return pwd_context.hash(password)
+
+def get_user(db, userid: str):
+    if userid in db:
+        user_dict = db[userid]
+        return UserInDB(**user_dict)
+    return None
+
+def create_user(db, user: User):
+    hashed_password = get_password_hash(user.password)
+    db[user.userid] = {
+        "userid": user.userid,
+        "hashed_password": hashed_password,
+        "role": user.role,
+    }
+
+def authenticate_user(db, userid: str, password: str):
+    user = get_user(db, userid)
+    if not user:
+        return False
+    if not verify_password(password, user.hashed_password):
+        return False
+    return user
+
+@app.post("/register")
+def register(user: User):
+    create_user(users_db, user)
+    return {"message": "User registered successfully"}
+
+@app.post("/login")
+def login(userid: str, password: str):
+    user = authenticate_user(users_db, userid, password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    # Create JWT token
+    token_data = {"sub": user.userid, "role": user.role}
+    token = jwt.encode(token_data, SECRET_KEY, algorithm=ALGORITHM)
+    return {"access_token": token, "token_type": "bearer"}
+
